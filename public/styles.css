@@ -1,0 +1,131 @@
+:root {
+  --bg: #0f1419;
+  --panel: #1a2129;
+  --panel-2: #232c36;
+  --text: #e6edf3;
+  --muted: #93a1ad;
+  --up: #2ea043;
+  --down: #e5534b;
+  --unknown: #6e7781;
+  --partial: #d29922;
+  --accent: #2f81f7;
+  --border: #2d3742;
+}
+
+* { box-sizing: border-box; }
+
+html, body {
+  margin: 0;
+  height: 100%;
+  font-family: -apple-system, "Segoe UI", Roboto, Arial, sans-serif;
+  background: var(--bg);
+  color: var(--text);
+}
+
+/* --- Логин --- */
+.login-wrap {
+  min-height: 100%;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 24px;
+}
+.login-card {
+  width: 100%;
+  max-width: 360px;
+  background: var(--panel);
+  border: 1px solid var(--border);
+  border-radius: 12px;
+  padding: 28px 24px;
+}
+.login-card h1 { font-size: 20px; margin: 0 0 4px; }
+.login-card p.sub { color: var(--muted); margin: 0 0 20px; font-size: 14px; }
+.login-card label { display: block; font-size: 13px; color: var(--muted); margin: 12px 0 6px; }
+.login-card input {
+  width: 100%;
+  padding: 11px 12px;
+  background: var(--panel-2);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  color: var(--text);
+  font-size: 15px;
+}
+.login-card button {
+  width: 100%;
+  margin-top: 20px;
+  padding: 12px;
+  background: var(--accent);
+  color: #fff;
+  border: 0;
+  border-radius: 8px;
+  font-size: 15px;
+  font-weight: 600;
+  cursor: pointer;
+}
+.login-card button:hover { filter: brightness(1.08); }
+.login-error {
+  margin-top: 16px;
+  padding: 10px 12px;
+  background: rgba(229, 83, 75, 0.12);
+  border: 1px solid var(--down);
+  border-radius: 8px;
+  color: #ffb4ae;
+  font-size: 14px;
+}
+
+/* --- Карта --- */
+#app { display: flex; flex-direction: column; height: 100%; }
+.topbar {
+  display: flex;
+  align-items: center;
+  gap: 16px;
+  padding: 10px 16px;
+  background: var(--panel);
+  border-bottom: 1px solid var(--border);
+  flex-wrap: wrap;
+}
+.topbar .title { font-weight: 600; font-size: 15px; }
+.topbar .stats { display: flex; gap: 14px; font-size: 13px; color: var(--muted); }
+.topbar .stats b { color: var(--text); }
+.dot { display: inline-block; width: 10px; height: 10px; border-radius: 50%; margin-right: 5px; vertical-align: middle; }
+.dot.up { background: var(--up); }
+.dot.down { background: var(--down); }
+.dot.unknown { background: var(--unknown); }
+.dot.partial { background: var(--partial); }
+.topbar .spacer { flex: 1; }
+.topbar .updated { font-size: 12px; color: var(--muted); }
+.topbar .stale { color: var(--partial); font-weight: 600; }
+.topbar form { margin: 0; }
+.topbar .logout {
+  background: transparent;
+  border: 1px solid var(--border);
+  color: var(--muted);
+  padding: 6px 12px;
+  border-radius: 7px;
+  font-size: 13px;
+  cursor: pointer;
+}
+.topbar .logout:hover { color: var(--text); }
+#map { flex: 1; width: 100%; }
+
+/* --- Карточка точки (балун) --- */
+.card { font-family: -apple-system, "Segoe UI", Roboto, Arial, sans-serif; min-width: 220px; }
+.card h3 { margin: 0 0 2px; font-size: 15px; }
+.card .row { color: #666; font-size: 12px; margin-bottom: 10px; }
+.card .radio { border-top: 1px solid #e3e3e3; padding: 8px 0; }
+.card .radio:last-child { border-bottom: 0; }
+.card .radio .name { font-weight: 600; font-size: 13px; display: flex; align-items: center; gap: 6px; }
+.card .metrics { display: grid; grid-template-columns: 1fr 1fr; gap: 2px 14px; margin-top: 6px; font-size: 12px; color: #444; }
+.card .metrics span b { color: #111; }
+.card .prob { color: #b3261e; font-size: 12px; margin-top: 6px; }
+.badge { font-size: 11px; padding: 1px 7px; border-radius: 10px; color: #fff; }
+.badge.up { background: var(--up); }
+.badge.down { background: var(--down); }
+.badge.unknown { background: var(--unknown); }
+.badge.partial { background: var(--partial); }
+
+@media (max-width: 600px) {
+  .topbar { gap: 8px 12px; padding: 8px 12px; }
+  .topbar .title { width: 100%; }
+  .topbar .stats { font-size: 12px; gap: 10px; }
+}

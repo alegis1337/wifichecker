@@ -1,8 +1,9 @@
 import { log, enableDebug } from './logger.js';
 import { collect } from './collector.js';
 import { openDb, dbFileExists } from './db.js';
-import { diffProblems } from './detector.js';
-import { notifyNewProblems, sendTest } from './notifier.js';
+import { diffProblems, diffAvailability, statusFromIcmp } from './detector.js';
+import { notifyNewProblems, sendTest, notifyApDown } from './notifier.js';
+import { config } from './config.js';
 
 const SEV = {
   0: 'not classified', 1: 'information', 2: 'warning',
@@ -60,13 +61,14 @@ async function main() {
   }
 
   // Сводка up/down по AP-точкам (из icmpping).
+  const apHosts = raw.hosts.filter((h) => h.isAp);
   let up = 0, down = 0, unknown = 0;
-  for (const h of raw.hosts) {
-    if (!h.isAp) continue;
+  for (const h of apHosts) {
     const m = raw.metrics.get(h.hostid);
-    if (!m || m.icmp === null) unknown++;
-    else if (m.icmp >= 1) up++;
-    else down++;
+    const s = statusFromIcmp(m ? m.icmp : null);
+    if (s === 'up') up++;
+    else if (s === 'down') down++;
+    else unknown++;
   }
   log.info(`Точки (AP): up=${up}, down=${down}, unknown=${unknown}`);
 
@@ -98,23 +100,41 @@ async function main() {
     process.exit(0);
   }
 
+  // Дифф доступности точек считаем до записи (нужен прошлый host_state).
+  const now = new Date().toISOString();
+  let avail = null;
   try {
+    const prevState = db.readHostStateAll();
+    avail = diffAvailability(apHosts, raw.metrics, prevState, now, config.clientDropThreshold);
+
     db.upsertHosts(raw.hosts);
     db.upsertMetrics(raw.metrics);
+    db.upsertHostInfo(raw.info, now);
+    db.appendMetricsHistory(raw.metrics, now);
     if (!baseline) {
-      const ts = new Date().toISOString();
       const events = [
-        ...newProblems.map((p) => ({ ts, kind: 'new', eventid: p.eventid, hostid: p.hostid, hostname: p.hostname, name: p.name, severity: p.severity })),
-        ...resolvedProblems.map((p) => ({ ts, kind: 'resolved', eventid: p.eventid, hostid: p.hostid, hostname: p.hostname, name: p.name, severity: p.severity })),
+        ...newProblems.map((p) => ({ ts: now, kind: 'new', eventid: p.eventid, hostid: p.hostid, hostname: p.hostname, name: p.name, severity: p.severity })),
+        ...resolvedProblems.map((p) => ({ ts: now, kind: 'resolved', eventid: p.eventid, hostid: p.hostid, hostname: p.hostname, name: p.name, severity: p.severity })),
       ];
       if (events.length) db.appendEvents(events);
     }
     db.writeProblems(raw.problems);
-    db.setMeta('last_run', new Date().toISOString());
+    db.updateHostState(avail.states);
+    if (!baseline && avail.events.length) db.appendStatusEvents(avail.events);
+    db.setMeta('last_run', now);
+    const pruned = db.pruneHistory(config.metricsHistoryDays);
+    if (pruned) log.info(`Прунинг истории: удалено ${pruned} записей старше ${config.metricsHistoryDays} дн.`);
   } catch (e) {
     log.error(`Запись в БД провалилась: ${e.message}`);
     if (db) db.close();
     process.exit(1);
+  }
+
+  // Лог транзитов доступности и массовых отключений.
+  if (!baseline && avail) {
+    for (const a of avail.downAps) log.warn(`[AP DOWN] ${a.hostname}`);
+    for (const a of avail.recoveredAps) log.info(`[AP UP] ${a.hostname} (простой ~${a.downtime_sec ?? '?'} с)`);
+    for (const d of avail.drops) log.warn(`[МАССОВОЕ ОТКЛЮЧЕНИЕ] ${d.hostname}: было ${d.prev} → 0 клиентов`);
   }
 
   if (!baseline && newProblems.length) {
@@ -122,6 +142,15 @@ async function main() {
       await notifyNewProblems(newProblems);
     } catch (e) {
       log.error(`Оповещение упало: ${e.message}`);
+    }
+  }
+
+  // Хелпдеск-оповещение о падении/восстановлении AP (gated, как и notifyNewProblems).
+  if (!baseline && avail && (avail.downAps.length || avail.recoveredAps.length)) {
+    try {
+      await notifyApDown(avail.downAps, avail.recoveredAps);
+    } catch (e) {
+      log.error(`Хелпдеск-оповещение упало: ${e.message}`);
     }
   }
 

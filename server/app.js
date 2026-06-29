@@ -8,7 +8,7 @@ import { config } from './config.js';
 import { log } from './logger.js';
 import { openWebDb } from './db.js';
 import { login } from './auth.js';
-import { buildStatus } from './status.js';
+import { buildStatus, buildPointDetail } from './status.js';
 
 const webDb = openWebDb();
 // Раз в час подчищаем протухшие сессии.
@@ -62,7 +62,7 @@ function currentUser(req) {
   const sid = parseCookies(req)[COOKIE];
   if (!sid) return null;
   const s = webDb.getSession(sid);
-  return s ? { sid, username: s.username } : null;
+  return s ? { sid, username: s.username, role: s.role } : null;
 }
 
 function send(res, status, body, headers = {}) {
@@ -169,6 +169,31 @@ async function router(req, res) {
     } catch (e) {
       log.error(`status: ${e.message}`);
       return sendJson(res, 500, { error: 'ошибка чтения статуса' });
+    }
+  }
+
+  // Кто я + роль — фронт по роли решает, показывать ли админ-панель.
+  if (path === '/api/me') {
+    if (!user) return sendJson(res, 401, { error: 'требуется вход' });
+    return sendJson(res, 200, { username: user.username, role: user.role });
+  }
+
+  // Админ-карточка точки: расширенные метрики, история клиентов, история падений.
+  // Только для роли admin; наружу не отдаёт ip/hostid (см. server/status.js).
+  if (path === '/api/admin/point') {
+    if (!user) return sendJson(res, 401, { error: 'требуется вход' });
+    if (user.role !== 'admin') return sendJson(res, 403, { error: 'нужны права администратора' });
+    const code = url.searchParams.get('code');
+    if (!code) return sendJson(res, 400, { error: 'нужен параметр code' });
+    const hours = Math.min(168, Math.max(1, Number(url.searchParams.get('hours') || 24)));
+    const outageDays = Math.min(365, Math.max(1, Number(url.searchParams.get('days') || 30)));
+    try {
+      const detail = buildPointDetail(code, { hours, outageDays });
+      if (!detail) return sendJson(res, 404, { error: 'точка не найдена' });
+      return sendJson(res, 200, detail);
+    } catch (e) {
+      log.error(`admin/point: ${e.message}`);
+      return sendJson(res, 500, { error: 'ошибка чтения карточки' });
     }
   }
 

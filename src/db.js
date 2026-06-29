@@ -22,6 +22,30 @@ CREATE TABLE IF NOT EXISTS metrics (
   hostid TEXT PRIMARY KEY, icmp INTEGER, clients INTEGER,
   traffic_in INTEGER, traffic_out INTEGER, temp REAL, cpu REAL, mem REAL, updated_at TEXT
 );
+-- v0.6 — данные для админ-панели:
+-- Таймлайн метрик (по строке за прогон) — динамика клиентов/статуса/нагрузки.
+CREATE TABLE IF NOT EXISTS metrics_history (
+  hostid TEXT, ts TEXT, icmp INTEGER, clients INTEGER,
+  traffic_in INTEGER, traffic_out INTEGER, temp REAL, cpu REAL, mem REAL
+);
+CREATE INDEX IF NOT EXISTS idx_metrics_history_host_ts ON metrics_history (hostid, ts);
+-- Атрибуты устройства из item.get: модель/прошивка/SSID/диапазон + аптайм (сек).
+-- Отдельная таблица (а не новые колонки в metrics) — чтобы не мигрировать боевую БД.
+CREATE TABLE IF NOT EXISTS host_info (
+  hostid TEXT PRIMARY KEY, model TEXT, firmware TEXT, ssid TEXT, band TEXT,
+  uptime INTEGER, updated_at TEXT
+);
+-- Текущее состояние точки: «последний раз онлайн», начало текущего статуса,
+-- последнее число клиентов — для диффа транзитов и детекта обвала клиентов.
+CREATE TABLE IF NOT EXISTS host_state (
+  hostid TEXT PRIMARY KEY, status TEXT, status_since TEXT, last_up_ts TEXT, last_clients INTEGER
+);
+-- Журнал транзитов доступности и массовых отключений: история падений точки.
+CREATE TABLE IF NOT EXISTS status_events (
+  id INTEGER PRIMARY KEY AUTOINCREMENT, ts TEXT, hostid TEXT,
+  kind TEXT, detail TEXT, downtime_sec INTEGER
+);
+CREATE INDEX IF NOT EXISTS idx_status_events_host_ts ON status_events (hostid, ts);
 `;
 
 export function dbFileExists() {
@@ -111,6 +135,95 @@ export function openDb() {
           stmt.run(hostid, m.icmp, m.clients, m.traffic_in, m.traffic_out, m.temp, m.cpu, m.mem, now);
         }
       });
+    },
+    // --- v0.6: история и состояние точек (для админ-панели) ---
+    appendMetricsHistory(metricsByHost, ts) {
+      const ins = db.prepare(
+        `INSERT INTO metrics_history (hostid, ts, icmp, clients, traffic_in, traffic_out, temp, cpu, mem)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+      );
+      tx(db, () => {
+        for (const [hostid, m] of metricsByHost) {
+          ins.run(hostid, ts, m.icmp, m.clients, m.traffic_in, m.traffic_out, m.temp, m.cpu, m.mem);
+        }
+      });
+    },
+    upsertHostInfo(infoByHost, ts) {
+      const stmt = db.prepare(
+        `INSERT INTO host_info (hostid, model, firmware, ssid, band, uptime, updated_at)
+         VALUES (?, ?, ?, ?, ?, ?, ?)
+         ON CONFLICT(hostid) DO UPDATE SET
+           model = excluded.model, firmware = excluded.firmware,
+           ssid = excluded.ssid, band = excluded.band,
+           uptime = excluded.uptime, updated_at = excluded.updated_at`,
+      );
+      tx(db, () => {
+        for (const [hostid, i] of infoByHost) {
+          stmt.run(hostid, i.model, i.firmware, i.ssid, i.band, i.uptime, ts);
+        }
+      });
+    },
+    readHostStateAll() {
+      const rows = db
+        .prepare('SELECT hostid, status, status_since, last_up_ts, last_clients FROM host_state')
+        .all();
+      return new Map(rows.map((r) => [r.hostid, r]));
+    },
+    updateHostState(states) {
+      const stmt = db.prepare(
+        `INSERT INTO host_state (hostid, status, status_since, last_up_ts, last_clients)
+         VALUES (?, ?, ?, ?, ?)
+         ON CONFLICT(hostid) DO UPDATE SET
+           status = excluded.status, status_since = excluded.status_since,
+           last_up_ts = excluded.last_up_ts, last_clients = excluded.last_clients`,
+      );
+      tx(db, () => {
+        for (const s of states) {
+          stmt.run(s.hostid, s.status, s.status_since, s.last_up_ts, s.last_clients);
+        }
+      });
+    },
+    appendStatusEvents(events) {
+      const ins = db.prepare(
+        'INSERT INTO status_events (ts, hostid, kind, detail, downtime_sec) VALUES (?, ?, ?, ?, ?)',
+      );
+      tx(db, () => {
+        for (const e of events) ins.run(e.ts, e.hostid, e.kind, e.detail ?? null, e.downtime_sec ?? null);
+      });
+    },
+    // Чистка истории старше N дней — чтобы БД не росла бесконечно.
+    pruneHistory(days) {
+      const cutoff = new Date(Date.now() - days * 86400 * 1000).toISOString();
+      const a = db.prepare('DELETE FROM metrics_history WHERE ts < ?').run(cutoff);
+      const b = db.prepare('DELETE FROM status_events WHERE ts < ?').run(cutoff);
+      return a.changes + b.changes;
+    },
+    // --- чтение для админ-API ---
+    readHostInfo(hostid) {
+      return db
+        .prepare('SELECT model, firmware, ssid, band, uptime, updated_at FROM host_info WHERE hostid = ?')
+        .get(hostid) ?? null;
+    },
+    readHostState(hostid) {
+      return db
+        .prepare('SELECT status, status_since, last_up_ts, last_clients FROM host_state WHERE hostid = ?')
+        .get(hostid) ?? null;
+    },
+    readMetricsHistory(hostid, sinceTs) {
+      return db
+        .prepare(
+          `SELECT ts, icmp, clients, traffic_in, traffic_out, temp, cpu, mem
+           FROM metrics_history WHERE hostid = ? AND ts >= ? ORDER BY ts ASC`,
+        )
+        .all(hostid, sinceTs);
+    },
+    readOutages(hostid, sinceTs) {
+      return db
+        .prepare(
+          `SELECT ts, kind, detail, downtime_sec FROM status_events
+           WHERE hostid = ? AND ts >= ? ORDER BY ts DESC`,
+        )
+        .all(hostid, sinceTs);
     },
     close() {
       db.close();

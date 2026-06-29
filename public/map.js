@@ -8,6 +8,7 @@ const state = {
   points: [],            // из points.json: {id, codes[], lat, lon}
   placemarks: new Map(), // id точки → ymaps.Placemark
   byCode: new Map(),     // code(lower) → запись хоста из /api/status
+  role: null,            // 'admin' | 'viewer' — из /api/me
 };
 
 function statusLabel(s) {
@@ -159,6 +160,14 @@ function initMap() {
       { hintContent: point.id },
       { preset: PRESET.unknown, balloonCloseButton: true },
     );
+    // Админу по клику показываем расширенную карточку (история/логи) вместо
+    // обычного балуна; viewer'у — балун как раньше.
+    pm.events.add('click', (e) => {
+      if (state.role === 'admin' && window.AdminPanel) {
+        e.preventDefault();
+        window.AdminPanel.open(point);
+      }
+    });
     state.placemarks.set(point.id, pm);
     state.map.geoObjects.add(pm);
   }
@@ -193,6 +202,9 @@ async function main() {
     const [pts] = await Promise.all([
       fetch('/points.json').then((r) => r.json()),
       loadYandex(key),
+      // Роль определяет, открывать ли админ-карточку по клику. Не критично для
+      // карты — при ошибке просто останемся в режиме viewer.
+      fetch('/api/me').then((r) => (r.ok ? r.json() : null)).then((me) => { state.role = me && me.role; }).catch(() => {}),
     ]);
     state.points = pts;
     initMap();

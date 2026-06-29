@@ -81,7 +81,7 @@ export async function collect() {
 
   // Богатые метрики только для AP-хостов (на карту идут только они).
   const apHostIds = hosts.filter((h) => h.isAp).map((h) => h.hostid);
-  const metrics = await collectMetrics(client, apHostIds);
+  const { metrics, info } = await collectMetrics(client, apHostIds);
 
-  return { hosts, problems: enrichedProblems, metrics };
+  return { hosts, problems: enrichedProblems, metrics, info };
 }

@@ -49,11 +49,18 @@ export const config = {
     from: process.env.SMTP_FROM || process.env.SMTP_USER || null,
     to: process.env.SMTP_TO || null,
   },
+  // Адрес хелпдеска для оповещений о падении AP (req v0.6). По умолчанию — SMTP_TO.
+  helpdeskTo: process.env.HELPDESK_TO || process.env.SMTP_TO || null,
+  // Сколько дней хранить историю метрик/событий (прунинг каждый прогон).
+  metricsHistoryDays: Number(process.env.METRICS_HISTORY_DAYS || 90),
+  // Падение числа клиентов с >= этого порога сразу до 0 считаем «массовым
+  // отключением» — признак проблемы самой точки, а не естественного ухода людей.
+  clientDropThreshold: Number(process.env.CLIENT_DROP_THRESHOLD || 3),
   // Префикс кодов точек в имени хоста Zabbix (специфика объекта — задаётся в .env,
   // в репозиторий не хардкодим). Пусто = автоопределение кода не работает.
   hostCodePrefix: process.env.HOST_CODE_PREFIX || '',
   // Имя объекта для писем/темы (специфика заказчика — из .env). Дефолт — генерик.
   siteName: process.env.SITE_NAME || 'Мониторинг Wi-Fi',
   timeoutMs: 30_000,
-  userAgent: 'wifi-monitor/0.5',
+  userAgent: 'wifi-monitor/0.6',
 };

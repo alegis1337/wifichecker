@@ -54,7 +54,14 @@ export function openWebDb() {
       ).run(sid, username, now.toISOString(), exp.toISOString());
     },
     getSession(sid) {
-      const r = db.prepare('SELECT sid, username, expires_at FROM sessions WHERE sid = ?').get(sid);
+      // JOIN users — чтобы роль (viewer/admin) бралась актуальная, без перелогина.
+      const r = db
+        .prepare(
+          `SELECT s.sid, s.username, s.expires_at, u.role
+           FROM sessions s JOIN users u ON u.username = s.username
+           WHERE s.sid = ?`,
+        )
+        .get(sid);
       if (!r) return null;
       if (new Date(r.expires_at).getTime() < Date.now()) {
         db.prepare('DELETE FROM sessions WHERE sid = ?').run(sid);

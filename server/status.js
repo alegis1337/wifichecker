@@ -86,3 +86,62 @@ export function buildStatus() {
     db.close();
   }
 }
+
+// Детальная карточка точки для АДМИН-панели (req v0.6). По коду точки резолвим
+// hostid сервер-сайд и НЕ отдаём его наружу (как и ip). Возвращаем расширенные
+// метрики, атрибуты устройства, таймлайн числа клиентов и историю падений.
+// Возвращает null, если точка с таким кодом не найдена.
+export function buildPointDetail(code, { hours = 24, outageDays = 30 } = {}) {
+  const db = openMonitorRead();
+  if (!db) return null;
+  try {
+    const host = db
+      .prepare('SELECT hostid, name, row, code FROM hosts WHERE LOWER(code) = LOWER(?) AND is_ap = 1')
+      .get(code);
+    if (!host) return null;
+    const hid = host.hostid;
+
+    const m = db
+      .prepare('SELECT icmp, clients, traffic_in, traffic_out, temp, cpu, mem, updated_at FROM metrics WHERE hostid = ?')
+      .get(hid) ?? null;
+    const info = db
+      .prepare('SELECT model, firmware, ssid, band, uptime FROM host_info WHERE hostid = ?')
+      .get(hid) ?? null;
+    const st = db
+      .prepare('SELECT status, status_since, last_up_ts, last_clients FROM host_state WHERE hostid = ?')
+      .get(hid) ?? null;
+
+    const sinceHist = new Date(Date.now() - hours * 3600 * 1000).toISOString();
+    const history = db
+      .prepare(
+        `SELECT ts, icmp, clients, traffic_in, traffic_out, temp, cpu, mem
+         FROM metrics_history WHERE hostid = ? AND ts >= ? ORDER BY ts ASC`,
+      )
+      .all(hid, sinceHist);
+
+    const sinceOut = new Date(Date.now() - outageDays * 86400 * 1000).toISOString();
+    const outages = db
+      .prepare(
+        `SELECT ts, kind, detail, downtime_sec FROM status_events
+         WHERE hostid = ? AND ts >= ? ORDER BY ts DESC`,
+      )
+      .all(hid, sinceOut);
+
+    return {
+      code: host.code,
+      name: host.name,
+      row: host.row,
+      status: st ? st.status : statusFromIcmp(m ? m.icmp : null),
+      status_since: st ? st.status_since : null,
+      last_up_ts: st ? st.last_up_ts : null,
+      last_clients: st ? st.last_clients : null,
+      device: info,
+      current: m,
+      history,
+      outages,
+      window: { hours, outage_days: outageDays },
+    };
+  } finally {
+    db.close();
+  }
+}

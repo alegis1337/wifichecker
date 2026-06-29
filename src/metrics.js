@@ -1,6 +1,8 @@
 import { log } from './logger.js';
 
 // Какой ключ Zabbix к какой метрике относится (по подстроке в key_).
+// Полный ключ шаблона MikroTik by SNMP содержит старый OID в скобках, например
+// ssid.regclient[mtxrWlApClientCount.2] — поэтому матчим по includes().
 const MATCH = {
   icmp: (k) => k === 'icmpping',
   clients: (k) => k.includes('mtxrWlApClientCount'),
@@ -9,6 +11,15 @@ const MATCH = {
   temp: (k) => k.includes('mtxrHlTemperature'),
   cpu: (k) => k.includes('hrProcessorLoad'),
   mem: (k) => k.includes('memoryUsedPercentage') || k.startsWith('vm.memory.util'),
+};
+
+// Атрибуты устройства (для админ-панели). Текстовые, кроме uptime (сек).
+const INFO = {
+  model: (k) => k.startsWith('system.hw.model'),
+  firmware: (k) => k.startsWith('system.hw.firmware'),
+  ssid: (k) => k.startsWith('ssid.name'),
+  band: (k) => k.startsWith('ssid.band'),
+  uptime: (k) => k.startsWith('system.hw.uptime'),
 };
 
 function num(v) {
@@ -24,10 +35,16 @@ function blank() {
   };
 }
 
+function blankInfo() {
+  return { model: null, firmware: null, ssid: null, band: null, uptime: null };
+}
+
 // Одним item.get тянем все items AP-хостов и раскладываем по hostid (не 47 запросов).
+// Возвращаем { metrics, info }: metrics — числовые показатели, info — атрибуты
+// устройства (модель/прошивка/SSID/диапазон/аптайм) для админ-панели.
 // Трафик — сумма по интерфейсам (приблизительно; уточним на этапе карточки точки).
 export async function collectMetrics(client, apHostIds) {
-  if (apHostIds.length === 0) return new Map();
+  if (apHostIds.length === 0) return { metrics: new Map(), info: new Map() };
 
   const items = await client.call('item.get', {
     output: ['hostid', 'key_', 'lastvalue'],
@@ -35,7 +52,8 @@ export async function collectMetrics(client, apHostIds) {
   });
 
   const acc = new Map();
-  for (const id of apHostIds) acc.set(id, blank());
+  const info = new Map();
+  for (const id of apHostIds) { acc.set(id, blank()); info.set(id, blankInfo()); }
 
   for (const it of items) {
     const m = acc.get(it.hostid);
@@ -49,6 +67,16 @@ export async function collectMetrics(client, apHostIds) {
     else if (MATCH.temp(k)) { if (v !== null) m.temp = v; }
     else if (MATCH.cpu(k)) { if (v !== null) { m._cpuSum += v; m._cpuN += 1; } }
     else if (MATCH.mem(k)) { if (v !== null) m.mem = v; }
+    else {
+      // Атрибуты устройства — текстовые, кроме uptime.
+      const i = info.get(it.hostid);
+      const raw = it.lastvalue;
+      if (INFO.model(k)) i.model = raw || null;
+      else if (INFO.firmware(k)) i.firmware = raw || null;
+      else if (INFO.ssid(k)) i.ssid = raw || null;
+      else if (INFO.band(k)) i.band = raw || null;
+      else if (INFO.uptime(k)) i.uptime = v;
+    }
   }
 
   for (const m of acc.values()) {
@@ -58,5 +86,5 @@ export async function collectMetrics(client, apHostIds) {
   }
 
   log.info(`Метрики собраны для ${acc.size} точек (item.get, 1 запрос, ${items.length} items)`);
-  return acc;
+  return { metrics: acc, info };
 }
